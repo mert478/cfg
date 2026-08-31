@@ -133,41 +133,87 @@ else { $netTier="ZAYIF"; $n_updaterate="30"; $n_cmdrate="30"; $n_interp="0.05" }
 
 Write-Host "Ortalama Ping: $avgPing ms -> Gecikme Profili: $netTier"
 
+Write-Host "`nGercek internet hizi olculuyor..." -ForegroundColor Cyan
+
 $downloadMbps = 0
+$uploadMbps = 0
+$speedSource = "OLCULEMEDI"
+
+# ---------------------------------------------------------
+#  6a) ONCELIKLI YONTEM: Resmi Ookla Speedtest CLI
+#      speedtest.net'in KENDI sunucu agini kullanir (en yakin/en hizli
+#      sunucuyu otomatik secer). Cloudflare gibi genel CDN testlerinden
+#      farkli olarak, ISP'lerin cogu Ookla ile "hizli yol" (peering)
+#      anlasmasi yaptigi icin sonuc genelde gercek hizinize cok daha yakin
+#      cikar - tam olarak speedtest.net sitesinde gordugunuz sonuc gibi.
+# ---------------------------------------------------------
 try {
-    # ONEMLI: Start-Job her baglanti icin ayri bir PowerShell process'i acar,
-    # bu process'lerin acilma suresi (1-3 saniye) olcume dahil olup sonucu
-    # yapay derecede dusuruyordu. Bunun yerine ayni process icinde gercek
-    # paralel (async) HTTP istekleri kullaniyoruz - process baslatma
-    # gecikmesi olmadan gercek indirme hizini olcer.
-    Add-Type -AssemblyName System.Net.Http -ErrorAction Stop
-    $handler = New-Object System.Net.Http.HttpClientHandler
-    $client = New-Object System.Net.Http.HttpClient($handler)
-    $client.Timeout = [TimeSpan]::FromSeconds(15)
+    $stDir = Join-Path $env:TEMP "cs16_speedtest_cli"
+    $stExe = Join-Path $stDir "speedtest.exe"
 
-    $parallelCount = 6
-    $bytesPerConn = 6000000  # 6 MB x 6 baglanti = 36 MB toplam
-    $testUrl = "https://speed.cloudflare.com/__down?bytes=$bytesPerConn"
+    if (-not (Test-Path $stExe)) {
+        if (-not (Test-Path $stDir)) { New-Item -Path $stDir -ItemType Directory -Force | Out-Null }
+        $zipPath = Join-Path $stDir "speedtest.zip"
+        Invoke-WebRequest -Uri "https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-win64.zip" -OutFile $zipPath -UseBasicParsing -TimeoutSec 20 -ErrorAction Stop
+        Expand-Archive -Path $zipPath -DestinationPath $stDir -Force
+        Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+    }
 
-    $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    $tasks = for ($i = 0; $i -lt $parallelCount; $i++) { $client.GetByteArrayAsync($testUrl) }
-    [System.Threading.Tasks.Task]::WaitAll($tasks, 15000) | Out-Null
-    $sw.Stop()
-
-    $totalBytes = 0
-    foreach ($t in $tasks) {
-        if ($t.Status -eq [System.Threading.Tasks.TaskStatus]::RanToCompletion) {
-            $totalBytes += $t.Result.Length
+    if (Test-Path $stExe) {
+        $jsonRaw = & $stExe --accept-license --accept-gdpr --format=json 2>$null
+        $result = $jsonRaw | ConvertFrom-Json -ErrorAction Stop
+        if ($result.download.bandwidth -gt 0) {
+            $downloadMbps = [math]::Round(($result.download.bandwidth * 8) / 1000000, 1)
+        }
+        if ($result.upload.bandwidth -gt 0) {
+            $uploadMbps = [math]::Round(($result.upload.bandwidth * 8) / 1000000, 1)
+        }
+        if ($downloadMbps -gt 0) {
+            $speedSource = "Ookla Speedtest CLI"
+            Write-Host "[OK] Ookla Speedtest CLI: Indirme ~$downloadMbps Mbps, Yukleme ~$uploadMbps Mbps" -ForegroundColor Green
+            if ($result.server.name) { Write-Host "     Sunucu: $($result.server.name) / $($result.server.location)" -ForegroundColor DarkGray }
         }
     }
-    $seconds = $sw.Elapsed.TotalSeconds
-    if ($totalBytes -gt 0 -and $seconds -gt 0) {
-        $downloadMbps = [math]::Round((($totalBytes * 8) / $seconds) / 1MB, 1)
-    }
-    $client.Dispose()
-} catch { $downloadMbps = 0 }
+} catch {
+    Write-Host "[UYARI] Ookla Speedtest CLI kullanilamadi, yedek yonteme geciliyor..." -ForegroundColor Yellow
+    $downloadMbps = 0
+}
 
-# Guvenlik: paralel test basarisiz/dusuk sonuc verirse tek baglantili yedek test dene
+# ---------------------------------------------------------
+#  6b) YEDEK YONTEM 1: Paralel HttpClient testi (Ookla basarisiz olursa)
+# ---------------------------------------------------------
+if ($downloadMbps -le 0) {
+    try {
+        Add-Type -AssemblyName System.Net.Http -ErrorAction Stop
+        $handler = New-Object System.Net.Http.HttpClientHandler
+        $client = New-Object System.Net.Http.HttpClient($handler)
+        $client.Timeout = [TimeSpan]::FromSeconds(15)
+
+        $parallelCount = 6
+        $bytesPerConn = 6000000
+        $testUrl = "https://speed.cloudflare.com/__down?bytes=$bytesPerConn"
+
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $tasks = for ($i = 0; $i -lt $parallelCount; $i++) { $client.GetByteArrayAsync($testUrl) }
+        [System.Threading.Tasks.Task]::WaitAll($tasks, 15000) | Out-Null
+        $sw.Stop()
+
+        $totalBytes = 0
+        foreach ($t in $tasks) {
+            if ($t.Status -eq [System.Threading.Tasks.TaskStatus]::RanToCompletion) { $totalBytes += $t.Result.Length }
+        }
+        $seconds = $sw.Elapsed.TotalSeconds
+        if ($totalBytes -gt 0 -and $seconds -gt 0) {
+            $downloadMbps = [math]::Round((($totalBytes * 8) / $seconds) / 1MB, 1)
+            if ($downloadMbps -gt 0) { $speedSource = "Yedek Test (Cloudflare, coklu baglanti)" }
+        }
+        $client.Dispose()
+    } catch { $downloadMbps = 0 }
+}
+
+# ---------------------------------------------------------
+#  6c) YEDEK YONTEM 2: Tek baglantili test (son care)
+# ---------------------------------------------------------
 if ($downloadMbps -le 0) {
     try {
         $sw2 = [System.Diagnostics.Stopwatch]::StartNew()
@@ -176,7 +222,10 @@ if ($downloadMbps -le 0) {
         $b2 = $resp2.RawContentLength
         if (-not $b2 -or $b2 -le 0) { $b2 = 4000000 }
         $s2 = $sw2.Elapsed.TotalSeconds
-        if ($s2 -gt 0) { $downloadMbps = [math]::Round((($b2 * 8) / $s2) / 1MB, 1) }
+        if ($s2 -gt 0) {
+            $downloadMbps = [math]::Round((($b2 * 8) / $s2) / 1MB, 1)
+            if ($downloadMbps -gt 0) { $speedSource = "Yedek Test (Cloudflare, tekil baglanti)" }
+        }
     } catch { $downloadMbps = 0 }
 }
 
@@ -185,7 +234,7 @@ elseif ($downloadMbps -ge 10) { $bwTier="ORTA"; $n_rate="40000" }
 elseif ($downloadMbps -gt 0) { $bwTier="DUSUK"; $n_rate="25000" }
 else { $bwTier="OLCULEMEDI"; $n_rate="25000" }
 
-if ($downloadMbps -gt 0) { Write-Host "Indirme Hizi: ~$downloadMbps Mbps -> Bant Genisligi Profili: $bwTier" -ForegroundColor Magenta }
+if ($downloadMbps -gt 0) { Write-Host "Indirme Hizi: ~$downloadMbps Mbps ($speedSource) -> Bant Genisligi Profili: $bwTier" -ForegroundColor Magenta }
 else { Write-Host "Indirme hizi olculemedi -> guvenli varsayilan rate kullanilacak" -ForegroundColor Yellow }
 
 # =========================================================
@@ -226,7 +275,7 @@ $cfg = @"
 // =========================================================
 // Hardware: $cpu ($cpuCores cekirdek) | $ramGB GB RAM | $gpu (~$vramGB GB VRAM) | $hz Hz
 // Secilen Mod: $(if ($modeChoice -eq "2") { "YUKSEK KALITE + REKABETCI" } else { "OTOMATIK ($hwTier)" })
-// Gecikme: $netTier ($avgPing ms) | Bant Genisligi: $bwTier (~$downloadMbps Mbps)
+// Gecikme: $netTier ($avgPing ms) | Bant Genisligi: $bwTier (~$downloadMbps Mbps, kaynak: $speedSource)
 // Olusturulma Tarihi: $(Get-Date -Format 'yyyy-MM-dd HH:mm')
 //
 // NOT: rate/cl_updaterate/cl_cmdrate gibi degerler sunucunun sv_ limitleriyle
