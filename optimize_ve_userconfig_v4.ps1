@@ -135,14 +135,48 @@ Write-Host "Ortalama Ping: $avgPing ms -> Gecikme Profili: $netTier"
 
 $downloadMbps = 0
 try {
+    # Tek baglantili test TCP yavas baslangic yuzunden gercek hizin altinda
+    # sonuc verir (speedtest.net gibi siteler coklu paralel baglanti kullanir).
+    # Burada da 4 paralel indirme baslatip toplam aktarilan veri/gecen sureyi
+    # olcerek gercek hiza daha yakin bir sonuc elde ediyoruz.
+    $parallelCount = 4
+    $bytesPerConn = 8000000  # 8 MB x 4 baglanti = 32 MB toplam
+    $testUrl = "https://speed.cloudflare.com/__down?bytes=$bytesPerConn"
+
+    $jobs = 1..$parallelCount | ForEach-Object {
+        Start-Job -ScriptBlock {
+            param($url)
+            try {
+                $r = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 15
+                return $r.RawContentLength
+            } catch { return 0 }
+        } -ArgumentList $testUrl
+    }
+
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    $resp = Invoke-WebRequest -Uri "https://speed.cloudflare.com/__down?bytes=4000000" -UseBasicParsing -TimeoutSec 8 -ErrorAction Stop
+    $results = $jobs | Wait-Job -Timeout 20 | Receive-Job
     $sw.Stop()
-    $bytesReceived = $resp.RawContentLength
-    if (-not $bytesReceived -or $bytesReceived -le 0) { $bytesReceived = 4000000 }
+    $jobs | Remove-Job -Force -ErrorAction SilentlyContinue
+
+    $totalBytes = ($results | Measure-Object -Sum).Sum
     $seconds = $sw.Elapsed.TotalSeconds
-    if ($seconds -gt 0) { $downloadMbps = [math]::Round((($bytesReceived * 8) / $seconds) / 1MB, 1) }
+    if ($totalBytes -gt 0 -and $seconds -gt 0) {
+        $downloadMbps = [math]::Round((($totalBytes * 8) / $seconds) / 1MB, 1)
+    }
 } catch { $downloadMbps = 0 }
+
+# Guvenlik: paralel test basarisiz/dusuk sonuc verirse tek baglantili yedek test dene
+if ($downloadMbps -le 0) {
+    try {
+        $sw2 = [System.Diagnostics.Stopwatch]::StartNew()
+        $resp2 = Invoke-WebRequest -Uri "https://speed.cloudflare.com/__down?bytes=4000000" -UseBasicParsing -TimeoutSec 8 -ErrorAction Stop
+        $sw2.Stop()
+        $b2 = $resp2.RawContentLength
+        if (-not $b2 -or $b2 -le 0) { $b2 = 4000000 }
+        $s2 = $sw2.Elapsed.TotalSeconds
+        if ($s2 -gt 0) { $downloadMbps = [math]::Round((($b2 * 8) / $s2) / 1MB, 1) }
+    } catch { $downloadMbps = 0 }
+}
 
 if ($downloadMbps -ge 50) { $bwTier="YUKSEK"; $n_rate="100000" }
 elseif ($downloadMbps -ge 10) { $bwTier="ORTA"; $n_rate="40000" }
@@ -179,9 +213,6 @@ switch ($qTier) {
 
 Write-Host "`n=== SISTEM OPTIMIZASYONU ===" -ForegroundColor Cyan
 $doSystemOpt = Read-Host "Guc plani, fare ivmesi, Game Mode/DVR gibi input lag ayarlari uygulansin mi? (E/H)"
-
-Write-Host "`n=== PERFORMANS DENETIMI ===" -ForegroundColor Cyan
-$doResourceCheck = Read-Host "Kaynak tuketen programlari ve antivirus tarama ayarlarini denetleyelim mi? (E/H)"
 
 # =========================================================
 #  4) userconfig.cfg OLUSTUR
@@ -372,82 +403,9 @@ if ($doSystemOpt -match '^[EeYy]') {
 }
 
 # =========================================================
-#  6) PERFORMANS DUSUREN YAZILIM DENETIMI
+#  6) GERI ALMA DOSYASI
 # =========================================================
-if ($doResourceCheck -match '^[EeYy]') {
-    Write-Host "`n=== KAYNAK TUKETEN PROGRAMLAR ===" -ForegroundColor Cyan
-    try {
-        $topProcs = Get-Process | Where-Object { $_.CPU -gt 0 } | Sort-Object CPU -Descending | Select-Object -First 8 Name, Id, CPU, @{N="RAM_MB";E={[math]::Round($_.WorkingSet/1MB,0)}}
-        $i = 1
-        $procMap = @{}
-        foreach ($p in $topProcs) {
-            Write-Host "  [$i] $($p.Name) (PID $($p.Id)) - CPU: $([math]::Round($p.CPU,1))s, RAM: $($p.RAM_MB) MB"
-            $procMap[$i] = $p
-            $i++
-        }
-        $closeChoice = Read-Host "`nKapatmak istediginiz programlarin numaralarini virgulle yazin (ornek: 1,3) veya bos birakin"
-        if ($closeChoice) {
-            $nums = $closeChoice -split "," | ForEach-Object { $_.Trim() }
-            foreach ($n in $nums) {
-                if ($procMap.ContainsKey([int]$n)) {
-                    try {
-                        Stop-Process -Id $procMap[[int]$n].Id -Force -ErrorAction Stop
-                        Write-Host "[OK] $($procMap[[int]$n].Name) kapatildi." -ForegroundColor Green
-                    } catch { Write-Host "[HATA] $($procMap[[int]$n].Name) kapatilamadi (yonetici gerekebilir): $_" -ForegroundColor Red }
-                }
-            }
-        }
-    } catch { Write-Host "[UYARI] Islem listesi alinamadi: $_" -ForegroundColor Yellow }
-
-    # --- Windows Defender: GUVENLI YOL = oyun klasorunu tarama disi birak ---
-    if ($isAdminNow) {
-        try {
-            $defenderStatus = Get-MpComputerStatus -ErrorAction Stop
-            if ($defenderStatus.RealTimeProtectionEnabled) {
-                Write-Host "`n=== WINDOWS DEFENDER ===" -ForegroundColor Cyan
-                Write-Host "Windows Defender gercek zamanli korumasi acik. Oyun sirasinda ani kasmalara sebep olabilir."
-                Write-Host "1) GUVENLI (ONERILEN): Sadece CS 1.6 klasorunu tarama disi birak"
-                Write-Host "2) RISKLI: Gercek zamanli korumayi TAMAMEN gecici olarak kapat"
-                Write-Host "3) Hicbir sey yapma"
-                $avChoice = Read-Host "Seciminiz (1/2/3)"
-
-                if ($avChoice -eq "1") {
-                    $gamePath = Read-Host "CS 1.6 kurulum klasorunun tam yolunu yapistirin (ornek: C:\Games\Counter-Strike 1.6)"
-                    if ($gamePath -and (Test-Path $gamePath)) {
-                        Add-MpPreference -ExclusionPath $gamePath -ErrorAction Stop
-                        $restoreLines += "Remove-MpPreference -ExclusionPath '$gamePath'"
-                        Write-Host "[OK] '$gamePath' Windows Defender taramasindan muaf tutuldu." -ForegroundColor Green
-                    } else {
-                        Write-Host "[UYARI] Gecerli bir klasor yolu girilmedi, atlaniyor." -ForegroundColor Yellow
-                    }
-                } elseif ($avChoice -eq "2") {
-                    Write-Host "[UYARI] Gercek zamanli koruma kapatilacak. Bu, bilgisayarinizi GECICI OLARAK risklere acar." -ForegroundColor Red
-                    $confirm = Read-Host "Emin misiniz? Onaylamak icin EVET yazin"
-                    if ($confirm -eq "EVET") {
-                        Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction Stop
-                        $restoreLines += "Set-MpPreference -DisableRealtimeMonitoring `$false"
-                        Write-Host "[OK] Gercek zamanli koruma kapatildi. OYUN BITINCE 'eski_ayarlara_don.ps1' ILE GERI ACMAYI UNUTMAYIN." -ForegroundColor Red
-                    } else {
-                        Write-Host "[BILGI] Iptal edildi." -ForegroundColor Yellow
-                    }
-                }
-            } else {
-                Write-Host "[BILGI] Windows Defender gercek zamanli koruma zaten kapali veya baska bir antivirus kullaniliyor." -ForegroundColor Yellow
-            }
-        } catch {
-            Write-Host "[BILGI] Windows Defender durumu okunamadi (baska bir antivirus kullaniyor olabilirsiniz)." -ForegroundColor Yellow
-        }
-    } else {
-        Write-Host "`n[UYARI] Yonetici yetkisi yok, Windows Defender ayarlari atlaniyor." -ForegroundColor Yellow
-    }
-} else {
-    Write-Host "[BILGI] Performans denetimi atlandi." -ForegroundColor Yellow
-}
-
-# =========================================================
-#  7) GERI ALMA DOSYASI
-# =========================================================
-if ($isAdminNow -and ($doSystemOpt -match '^[EeYy]' -or $doResourceCheck -match '^[EeYy]')) {
+if ($isAdminNow -and ($doSystemOpt -match '^[EeYy]')) {
     try {
         $restorePath = Join-Path ([Environment]::GetFolderPath('Desktop')) "eski_ayarlara_don.ps1"
         Set-Content -Path $restorePath -Value ($restoreLines -join "`r`n") -Encoding UTF8 -ErrorAction Stop
@@ -455,6 +413,15 @@ if ($isAdminNow -and ($doSystemOpt -match '^[EeYy]' -or $doResourceCheck -match 
     } catch { Write-Host "[UYARI] Geri alma dosyasi olusturulamadi." -ForegroundColor Yellow }
 }
 
+Write-Host "`n=========================================================" -ForegroundColor DarkCyan
+Write-Host "   SON ADIM: userconfig.cfg DOSYASINI OYUN KLASORUNE TASI" -ForegroundColor Yellow
+Write-Host "=========================================================" -ForegroundColor DarkCyan
+Write-Host "Masaustunde olusturulan 'userconfig.cfg' dosyasini kopyalayip"
+Write-Host "CS 1.6 kurulumunuzdaki 'cstrike' klasorune yapistirin, ornegin:"
+Write-Host "  C:\...\Counter-Strike 1.6\cstrike\userconfig.cfg" -ForegroundColor Green
+Write-Host "Ardindan oyunu (yeniden) baslatin, ayarlar otomatik yuklenecektir."
+
 Write-Host "`n=== ISLEM TAMAMLANDI ===" -ForegroundColor Cyan
+Write-Host "Bol fraglar, iyi hs'ler! -Ay Yildiz | Silva" -ForegroundColor Magenta
 Write-Host "Devam etmek icin bir tusa basin..."
 [void][System.Console]::ReadKey($true)
