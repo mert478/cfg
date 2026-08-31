@@ -1,13 +1,20 @@
 # =========================================================
 #  Otomatik Donanim Algilama + userconfig.cfg Olusturucu
 #  + Input Lag Azaltma Sistem Ayarlari
-#  Surum: 2.0 (Topluluk / Genel Dagitim Surumu)
+#  Surum: 3.0 (Dogrulanmis cvar'lar + Donanim Profili + Ping Bazli Network)
 #
 #  Bu script:
 #   - Sisteminizi otomatik Yonetici olarak yeniden baslatir (gerekliyse)
 #   - Gercek/aktif GPU'yu sanal adaptorlerden ayirt ederek secer
+#   - CPU cekirdek sayisi, RAM ve VRAM'e gore DUSUK/ORTA/YUKSEK donanim profili secer
+#   - Internet gecikmesini (ping) olcup network cvar'larini otomatik ayarlar
 #   - Guc plani, fare ivmesi, Game DVR ayarlarini degistirir
 #   - Degisiklik yapmadan ONCE eski degerleri yedekler (restore.ps1 olusturur)
+#
+#  NOT (v3): Asagidaki cvar'lar gercek oyun testinde "Unknown command" verdigi
+#  icin cfg'den CIKARILDI: gl_smoothmodel, gl_playermip, contrast, cl_downloadfilter,
+#  cl_predict, cl_showpos, S_ENABLE_MMX (yerine dogrulanmis r_mmx kullanildi),
+#  snd_mute_losefocus.
 # =========================================================
 
 # ---------------------------------------------------------
@@ -28,18 +35,34 @@ if (-not $isAdmin) {
 Write-Host "Sistem bilgileri toplaniyor..." -ForegroundColor Cyan
 
 # ---------------------------------------------------------
-#  1) CPU bilgisi
+#  1) CPU bilgisi (isim + cekirdek sayisi)
 # ---------------------------------------------------------
 try {
     $cpuInfo = Get-CimInstance Win32_Processor -ErrorAction Stop
-    $cpu = if ($cpuInfo -is [array]) { $cpuInfo[0].Name } else { $cpuInfo.Name }
+    if ($cpuInfo -is [array]) { $cpuInfo = $cpuInfo[0] }
+    $cpu = $cpuInfo.Name
+    $cpuCores = $cpuInfo.NumberOfCores
+    if (-not $cpuCores -or $cpuCores -le 0) { $cpuCores = 2 }
 } catch {
     Write-Host "[UYARI] CPU bilgisi okunamadi." -ForegroundColor Yellow
     $cpu = "Bilinmiyor"
+    $cpuCores = 2
 }
 
 # ---------------------------------------------------------
-#  2) GPU bilgisi - sanal/hayali adaptorleri disla
+#  2) RAM bilgisi (GB)
+# ---------------------------------------------------------
+try {
+    $ramBytes = (Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).TotalPhysicalMemory
+    $ramGB = [math]::Round($ramBytes / 1GB, 1)
+    if (-not $ramGB -or $ramGB -le 0) { $ramGB = 8 }
+} catch {
+    Write-Host "[UYARI] RAM bilgisi okunamadi, 8 GB varsayilan kullaniliyor." -ForegroundColor Yellow
+    $ramGB = 8
+}
+
+# ---------------------------------------------------------
+#  3) GPU bilgisi - sanal/hayali adaptorleri disla, VRAM oku
 # ---------------------------------------------------------
 $virtualGpuPatterns = @(
     "Basic Render", "Basic Display", "Remote Desktop", "DisplayLink",
@@ -66,133 +89,221 @@ if (-not $activeGpus) {
     Write-Host "[UYARI] Gercek/aktif ekran karti tespit edilemedi, varsayilan degerler kullaniliyor." -ForegroundColor Yellow
     $gpu = "Bilinmiyor"
     $hz = 60
+    $vramGB = 2
 }
 elseif ($activeGpus -is [array]) {
     $primary = $activeGpus | Sort-Object -Property AdapterRAM -Descending | Select-Object -First 1
     $gpu = $primary.Name
     $hz = $primary.CurrentRefreshRate
+    $vramGB = if ($primary.AdapterRAM -gt 0) { [math]::Round($primary.AdapterRAM / 1GB, 1) } else { 2 }
     Write-Host "[BILGI] Birden fazla aktif GPU bulundu, ana GPU olarak '$gpu' secildi." -ForegroundColor Yellow
 }
 else {
     $gpu = $activeGpus.Name
     $hz = $activeGpus.CurrentRefreshRate
+    $vramGB = if ($activeGpus.AdapterRAM -gt 0) { [math]::Round($activeGpus.AdapterRAM / 1GB, 1) } else { 2 }
 }
 
+# Not: Modern surucularde AdapterRAM 32-bit tasma nedeniyle yanlis/kucuk deger
+# dondurebilir (ornegin 4GB+ kartlarda). Bu durumda VRAM'i guvenli tarafta (dusuk)
+# varsayip profili buna gore secmek, gereginden fazla ayar acmaktan daha guvenlidir.
+if ($vramGB -le 0 -or $vramGB -gt 64) { $vramGB = 2 }
+
 # ---------------------------------------------------------
-#  3) Hz guvenlik kontrolu + fps hesaplama (float hatasiz)
+#  4) Hz guvenlik kontrolu + fps hesaplama
 # ---------------------------------------------------------
 if (-not $hz -or $hz -le 0 -or $hz -gt 1000) {
     Write-Host "[UYARI] Yenileme hizi guvenilir okunamadi (deger: $hz), 60 Hz varsayilan kullaniliyor." -ForegroundColor Yellow
     $hz = 60
 }
-
 $fps = [math]::Round(($hz - 0.5), 1)
 
-Write-Host "CPU : $cpu"
-Write-Host "GPU : $gpu"
-Write-Host "Hz  : $hz"
-Write-Host "FPS Limiti: $fps"
+# ---------------------------------------------------------
+#  5) Donanim profili belirleme (DUSUK / ORTA / YUKSEK)
+# ---------------------------------------------------------
+# Puanlama: CPU cekirdek + RAM + VRAM uzerinden basit bir agirlikli skor
+$score = 0
+if ($cpuCores -ge 6) { $score += 2 } elseif ($cpuCores -ge 4) { $score += 1 }
+if ($ramGB -ge 16) { $score += 2 } elseif ($ramGB -ge 8) { $score += 1 }
+if ($vramGB -ge 6) { $score += 2 } elseif ($vramGB -ge 3) { $score += 1 }
+
+if ($score -ge 5) {
+    $tier = "YUKSEK"
+} elseif ($score -ge 3) {
+    $tier = "ORTA"
+} else {
+    $tier = "DUSUK"
+}
+
+switch ($tier) {
+    "YUKSEK" {
+        $t_texturemode = "GL_LINEAR_MIPMAP_LINEAR"
+        $t_maxsize     = "2048"
+        $t_rounddown   = "0"
+        $t_maxshells   = "300"
+        $t_smokepuffs  = "300"
+        $t_decals      = "600"
+        $t_corpsestay  = "3"
+    }
+    "ORTA" {
+        $t_texturemode = "GL_LINEAR_MIPMAP_LINEAR"
+        $t_maxsize     = "1024"
+        $t_rounddown   = "1"
+        $t_maxshells   = "60"
+        $t_smokepuffs  = "60"
+        $t_decals      = "150"
+        $t_corpsestay  = "1"
+    }
+    "DUSUK" {
+        $t_texturemode = "GL_NEAREST_MIPMAP_NEAREST"
+        $t_maxsize     = "512"
+        $t_rounddown   = "3"
+        $t_maxshells   = "0"
+        $t_smokepuffs  = "0"
+        $t_decals      = "0"
+        $t_corpsestay  = "0"
+    }
+}
+
+Write-Host "CPU        : $cpu ($cpuCores cekirdek)"
+Write-Host "RAM        : $ramGB GB"
+Write-Host "GPU        : $gpu (~$vramGB GB VRAM)"
+Write-Host "Hz         : $hz"
+Write-Host "FPS Limiti : $fps"
+Write-Host "Donanim Profili: $tier" -ForegroundColor Magenta
+
+# ---------------------------------------------------------
+#  6) Internet gecikmesi (ping) olcumu -> network profili
+# ---------------------------------------------------------
+Write-Host "`nInternet gecikmesi olculuyor..." -ForegroundColor Cyan
+
+$pingTargets = @("8.8.8.8", "1.1.1.1")
+$latencies = @()
+
+foreach ($target in $pingTargets) {
+    try {
+        $result = Test-Connection -ComputerName $target -Count 3 -ErrorAction Stop
+        $avg = ($result | Measure-Object -Property ResponseTime -Average).Average
+        if ($avg) { $latencies += $avg }
+    } catch {
+        # hedef yanit vermedi, atla
+    }
+}
+
+if ($latencies.Count -gt 0) {
+    $avgPing = [math]::Round(($latencies | Measure-Object -Average).Average, 0)
+} else {
+    Write-Host "[UYARI] Ping olculemedi (baglanti/firewall engeli olabilir), orta seviye network ayari kullanilacak." -ForegroundColor Yellow
+    $avgPing = 60
+}
+
+if ($avgPing -le 30) {
+    $netTier = "IYI"
+    $n_updaterate = "101"
+    $n_cmdrate = "101"
+    $n_interp = "0.01"
+    $n_rate = "100000"
+} elseif ($avgPing -le 80) {
+    $netTier = "ORTA"
+    $n_updaterate = "60"
+    $n_cmdrate = "60"
+    $n_interp = "0.02"
+    $n_rate = "40000"
+} else {
+    $netTier = "ZAYIF"
+    $n_updaterate = "30"
+    $n_cmdrate = "30"
+    $n_interp = "0.05"
+    $n_rate = "25000"
+}
+
+Write-Host "Ortalama Ping: $avgPing ms -> Network Profili: $netTier" -ForegroundColor Magenta
 
 # =========================================================
-#  4) userconfig.cfg olustur
+#  7) userconfig.cfg olustur
 # =========================================================
 $cfg = @"
 // =========================================================
-// Hardware: $cpu | $gpu | $hz Hz
+// Hardware: $cpu ($cpuCores cekirdek) | $ramGB GB RAM | $gpu (~$vramGB GB VRAM) | $hz Hz
+// Donanim Profili: $tier | Network Profili: $netTier (ortalama ping: $avgPing ms)
 // Olusturulma Tarihi: $(Get-Date -Format 'yyyy-MM-dd HH:mm')
 //
-// NOT: Asagidaki tum ayarlar AKTIF durumdadir. Bazi degerler
-// (sensitivity, gamma, brightness, contrast gibi) kisiye/monitore gore
-// degisir - varsayilan bir deger atanmistir, kendine gore duzenlemekten
-// cekinme (deger sadece degistir, satiri silme).
+// NOT: Asagidaki tum ayarlar AKTIF durumdadir. Bazi degerler (sensitivity,
+// gamma, brightness gibi) kisiye/monitore gore degisir - varsayilan bir deger
+// atanmistir, kendine gore duzenlemekten cekinme (deger sadece degistir).
 //
-// NOT 2: Bircok cvar (rate, cl_updaterate, cl_cmdrate, fps_max vb.)
-// sunucu tarafindan sv_ limitleriyle KISITLANABILIR. Client'ta yuksek
-// deger yazman, sunucu izin vermiyorsa hicbir sey degistirmez.
+// NOT 2: Bircok cvar (rate, cl_updaterate, cl_cmdrate, fps_max vb.) sunucu
+// tarafindan sv_ limitleriyle KISITLANABILIR. Client'ta yuksek deger yazman,
+// sunucu izin vermiyorsa hicbir sey degistirmez.
 // =========================================================
 
 // --- FPS / Cekirdek ---
 fps_max "$fps"
 fps_override "1"
-gl_vsync "0"
 
-// --- Render / Grafik ---
-gl_ansio "0"
+// --- Render / Grafik (donanim profiline gore: $tier) ---
 gl_fog "0"
-gl_smoothmodel "0"
 gl_spriteblend "0"
 gl_polyoffset "0.1"
 gl_flipmatrix "0"
-gl_max_size "2048"
-gl_playermip "2"
-gl_round_down "0"
 r_mirroralpha "0"
 r_dynamic "0"
-gl_texturemode "GL_LINEAR_MIPMAP_LINEAR"   // dokulari yumusatir, pixellesmeyi onler (GTX 1070 Ti ve uzeri kartlarda FPS kaybi ihmal edilebilir)
+r_mmx "1"
+gl_texturemode "$t_texturemode"
+gl_max_size "$t_maxsize"
+gl_round_down "$t_rounddown"
 gamma "3"                // ekran parlakligi, kisiye/monitore gore degistirebilirsin
 brightness "2"           // ekran parlakligi, kisiye/monitore gore degistirebilirsin
-contrast "1"             // ekran kontrasti, kisiye/monitore gore degistirebilirsin
 // r_fullbright BILEREK EKLENMEDI: cogu sunucuda admin mod/antihile tarafindan
 // tespit edilip banlanma riski tasir, bu bir "hile siniri" ayaridir.
 
 // --- Mouse / Input ---
-m_rawinput "1"
 m_filter "0"
-m_customaccel "0"
-m_mousethread_sleep "0"
 sensitivity "3.0"              // fare hassasiyeti - kisiye gore degistirebilirsin
-zoom_sensitivity_ratio "1.0"   // scope/zoom hassasiyet orani - kisiye gore degistirebilirsin
 
-// --- Network ---
-rate "100000"
-cl_cmdrate "101"
-cl_updaterate "101"
-ex_interp "0.01"
+// --- Network (ping bazli otomatik: $netTier, ~$avgPing ms) ---
+rate "$n_rate"
+cl_cmdrate "$n_cmdrate"
+cl_updaterate "$n_updaterate"
+ex_interp "$n_interp"
 cl_cmdbackup "2"
 cl_resend "1.5"
 cl_allowdownload "0"
 cl_allowupload "0"
 cl_download_ingame "0"
-cl_downloadfilter "none"
 
-// --- Prediction / Lag Compensation (input lag icin KRITIK) ---
-cl_predict "1"
+// --- Lag Compensation (input lag icin KRITIK) ---
 cl_lw "1"
 cl_lc "1"
 
 // --- HUD / Konsol ---
 developer "0"
-cl_showpos "0"
 net_graph "0"
 cl_showfps "1"           // ekranda FPS sayacini gosterir
 
-// --- Gorsel gurultuyu azalt (rakip gorunurlugu + performans) ---
+// --- Gorsel gurultuyu azalt (donanim profiline gore: $tier) ---
 hpk_maxsize "0"
-cl_corpsestay "0"
-max_shells "0"
-max_smokepuffs "0"
-mp_decals "0"
-r_decals "0"
-violence_ablood "0"     // kan efektini kapatir (performans + gorsel gurultu azaltma)
-violence_agibs "0"      // "gib" (parcalanma) efektini kapatir
+cl_corpsestay "$t_corpsestay"
+max_shells "$t_maxshells"
+max_smokepuffs "$t_smokepuffs"
+mp_decals "$t_decals"
+r_decals "$t_decals"
 
 // --- Ses ---
 _snd_mixahead "0.05"
-S_ENABLE_MMX "1"
 voice_enable "0"
-snd_mute_losefocus "0"  // alt-tab yapinca sesi susturmaz (adim sesi takibi icin)
 MP3Volume "0"           // oyun ici radyo/muzik sesini kapatir
 suitvolume "0"          // HEV suit uyari sesini kapatir
 
 // --- Hareket ---
 cl_vsmoothing "0"
-cl_sidespeed "999"
-cl_backspeed "999"
-cl_forwardspeed "999"
+cl_sidespeed "400"
+cl_backspeed "400"
+cl_forwardspeed "400"
 cl_bob "0.01"            // view bobbing miktari - kisiye gore degistirebilirsin
 cl_bobcycle "0.8"        // view bobbing hizi - kisiye gore degistirebilirsin
 
-echo "=== FULL SYSTEM USERCONFIG LOADED (v2 - genisletilmis) ==="
+echo "=== USERCONFIG LOADED (v3 - donanim + ping bazli) ==="
 "@
 
 try {
@@ -205,22 +316,22 @@ try {
 }
 
 # =========================================================
-#  5) Input Lag Azaltma - Sistem Seviyesi Ayarlar (Yonetici gerekir)
+#  8) Input Lag Azaltma - Sistem Seviyesi Ayarlar (Yonetici gerekir)
 # =========================================================
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
 if (-not $isAdmin) {
-    Write-Host "`n[BILGI] Yonetici yetkisi yok, sistem seviyesi ayarlar atlanyor." -ForegroundColor Yellow
+    Write-Host "`n[BILGI] Yonetici yetkisi yok, sistem seviyesi ayarlar atlaniyor." -ForegroundColor Yellow
 }
 else {
     Write-Host "`nSistem seviyesi ayarlar uygulaniyor (eski degerler once yedeklenecek)..." -ForegroundColor Cyan
 
     $restoreLines = @()
-    $restoreLines += "# Bu script, optimize_ve_userconfig_v2.ps1 tarafindan degistirilen ayarlari geri alir."
+    $restoreLines += "# Bu script, optimize_ve_userconfig_v3.ps1 tarafindan degistirilen ayarlari geri alir."
     $restoreLines += "# Yonetici olarak calistirin."
     $restoreLines += ""
 
-    # --- 5a) Guc plani ---
+    # --- 8a) Guc plani ---
     try {
         $currentScheme = (powercfg -getactivescheme) -replace '.*GUID: ([a-f0-9\-]+).*', '$1'
         $restoreLines += "powercfg -setactive $currentScheme"
@@ -242,7 +353,7 @@ else {
         Write-Host "[HATA] Guc plani ayarlanamadi: $_" -ForegroundColor Red
     }
 
-    # --- 5b) Fare hizlanmasini kapat ---
+    # --- 8b) Fare hizlanmasini kapat ---
     try {
         $mp = "HKCU:\Control Panel\Mouse"
         $oldSpeed = (Get-ItemProperty -Path $mp -Name MouseSpeed -ErrorAction SilentlyContinue).MouseSpeed
@@ -261,7 +372,7 @@ else {
         Write-Host "[HATA] Fare ayarlari degistirilemedi: $_" -ForegroundColor Red
     }
 
-    # --- 5c) Game DVR / Game Bar kapat ---
+    # --- 8c) Game DVR / Game Bar kapat ---
     try {
         $gcs = "HKCU:\System\GameConfigStore"
         if (-not (Test-Path $gcs)) { New-Item -Path $gcs -Force | Out-Null }
