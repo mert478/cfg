@@ -101,10 +101,10 @@ $cfg = @"
 // Hardware: $cpu | $gpu | $hz Hz
 // Olusturulma Tarihi: $(Get-Date -Format 'yyyy-MM-dd HH:mm')
 //
-// NOT: ## ile baslayan satirlar KISISEL TERCIH ayarlaridir
-// (hassasiyet, crosshair, ekran parlakligi, kan/gore vb.)
-// Bunlar bilinerek AKTIF EDILMEDI, cunku dogru "ortak" degerleri yok.
-// Kullanmak icin basindaki ## isaretini silip degeri kendine gore ayarla.
+// NOT: Asagidaki tum ayarlar AKTIF durumdadir. Bazi degerler
+// (sensitivity, gamma, brightness, contrast gibi) kisiye/monitore gore
+// degisir - varsayilan bir deger atanmistir, kendine gore duzenlemekten
+// cekinme (deger sadece degistir, satiri silme).
 //
 // NOT 2: Bircok cvar (rate, cl_updaterate, cl_cmdrate, fps_max vb.)
 // sunucu tarafindan sv_ limitleriyle KISITLANABILIR. Client'ta yuksek
@@ -128,19 +128,20 @@ gl_playermip "2"
 gl_round_down "2"
 r_mirroralpha "0"
 r_dynamic "0"
-## gl_texturemode "GL_NEAREST_MIPMAP_NEAREST"   // en hizli ama en dusuk kalite doku; "GL_LINEAR_MIPMAP_LINEAR" daha net ama daha yavas
-## r_fullbright "1"        // haritayi tam aydinlatir, GORSEL AVANTAJ sayilabilir - COGU SUNUCUDA YASAK / admin mod tarafindan tespit edilir, ac RISK SENDE
-## gamma "3"                // ekran parlakligi, kisiye/monitore gore degisir
-## brightness "2"           // ekran parlakligi, kisiye/monitore gore degisir
-## contrast "1"             // ekran kontrasti, kisiye/monitore gore degisir
+gl_texturemode "GL_NEAREST_MIPMAP_NEAREST"   // en hizli doku modu (dusuk kalite pahasina)
+gamma "3"                // ekran parlakligi, kisiye/monitore gore degistirebilirsin
+brightness "2"           // ekran parlakligi, kisiye/monitore gore degistirebilirsin
+contrast "1"             // ekran kontrasti, kisiye/monitore gore degistirebilirsin
+// r_fullbright BILEREK EKLENMEDI: cogu sunucuda admin mod/antihile tarafindan
+// tespit edilip banlanma riski tasir, bu bir "hile siniri" ayaridir.
 
 // --- Mouse / Input ---
 m_rawinput "1"
 m_filter "0"
 m_customaccel "0"
 m_mousethread_sleep "0"
-## sensitivity "3.0"              // fare hassasiyeti - TAMAMEN KISISEL, herkese ayni deger yanlis olur
-## zoom_sensitivity_ratio "1.0"   // scope/zoom hassasiyet orani - kisisel
+sensitivity "3.0"              // fare hassasiyeti - kisiye gore degistirebilirsin
+zoom_sensitivity_ratio "1.0"   // scope/zoom hassasiyet orani - kisiye gore degistirebilirsin
 
 // --- Network ---
 rate "100000"
@@ -163,7 +164,7 @@ cl_lc "1"
 developer "0"
 cl_showpos "0"
 net_graph "0"
-## cl_showfps "1"           // ekranda FPS sayacini gosterir, performans olcumu icin ac istersen
+cl_showfps "1"           // ekranda FPS sayacini gosterir
 
 // --- Gorsel gurultuyu azalt (rakip gorunurlugu + performans) ---
 hpk_maxsize "0"
@@ -172,24 +173,24 @@ max_shells "0"
 max_smokepuffs "0"
 mp_decals "0"
 r_decals "0"
-## violence_ablood "0"     // kan efekti kapatir, bazi oyuncular vurus geri bildirimi icin acik tutar - kisisel tercih
-## violence_agibs "0"      // "gib" (parcalanma) efekti kapatir - kisisel tercih
+violence_ablood "0"     // kan efektini kapatir (performans + gorsel gurultu azaltma)
+violence_agibs "0"      // "gib" (parcalanma) efektini kapatir
 
 // --- Ses ---
 _snd_mixahead "0.05"
 S_ENABLE_MMX "1"
 voice_enable "0"
-## snd_mute_losefocus "0"  // alt-tab yapinca sesi susturmaz, adim sesi takibi icin bazilari kullanir
-## MP3Volume "0"           // oyun ici radyo/muzik sesi - kisisel tercih
-## suitvolume "0"          // HEV suit uyari sesi seviyesi - kisisel tercih
+snd_mute_losefocus "0"  // alt-tab yapinca sesi susturmaz (adim sesi takibi icin)
+MP3Volume "0"           // oyun ici radyo/muzik sesini kapatir
+suitvolume "0"          // HEV suit uyari sesini kapatir
 
 // --- Hareket ---
 cl_vsmoothing "0"
 cl_sidespeed "999"
 cl_backspeed "999"
 cl_forwardspeed "999"
-## cl_bob "0.01"            // view bobbing miktari - kisisel tercih, bazilari 0 yapar
-## cl_bobcycle "0.8"        // view bobbing hizi - kisisel tercih
+cl_bob "0.01"            // view bobbing miktari - kisiye gore degistirebilirsin
+cl_bobcycle "0.8"        // view bobbing hizi - kisiye gore degistirebilirsin
 
 echo "=== FULL SYSTEM USERCONFIG LOADED (v2 - genisletilmis) ==="
 "@
