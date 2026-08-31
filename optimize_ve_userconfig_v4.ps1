@@ -352,7 +352,7 @@ cl_forwardspeed "400"
 cl_bob "0.01"
 cl_bobcycle "0.8"
 
-echo "=== USERCONFIG LOADED (v4) ==="
+echo "=== Otomatik Optimizasyon Ayarları Yüklendi.# -Silva ^^ ==="
 "@
 
 try {
