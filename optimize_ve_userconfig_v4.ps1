@@ -135,34 +135,36 @@ Write-Host "Ortalama Ping: $avgPing ms -> Gecikme Profili: $netTier"
 
 $downloadMbps = 0
 try {
-    # Tek baglantili test TCP yavas baslangic yuzunden gercek hizin altinda
-    # sonuc verir (speedtest.net gibi siteler coklu paralel baglanti kullanir).
-    # Burada da 4 paralel indirme baslatip toplam aktarilan veri/gecen sureyi
-    # olcerek gercek hiza daha yakin bir sonuc elde ediyoruz.
-    $parallelCount = 4
-    $bytesPerConn = 8000000  # 8 MB x 4 baglanti = 32 MB toplam
+    # ONEMLI: Start-Job her baglanti icin ayri bir PowerShell process'i acar,
+    # bu process'lerin acilma suresi (1-3 saniye) olcume dahil olup sonucu
+    # yapay derecede dusuruyordu. Bunun yerine ayni process icinde gercek
+    # paralel (async) HTTP istekleri kullaniyoruz - process baslatma
+    # gecikmesi olmadan gercek indirme hizini olcer.
+    Add-Type -AssemblyName System.Net.Http -ErrorAction Stop
+    $handler = New-Object System.Net.Http.HttpClientHandler
+    $client = New-Object System.Net.Http.HttpClient($handler)
+    $client.Timeout = [TimeSpan]::FromSeconds(15)
+
+    $parallelCount = 6
+    $bytesPerConn = 6000000  # 6 MB x 6 baglanti = 36 MB toplam
     $testUrl = "https://speed.cloudflare.com/__down?bytes=$bytesPerConn"
 
-    $jobs = 1..$parallelCount | ForEach-Object {
-        Start-Job -ScriptBlock {
-            param($url)
-            try {
-                $r = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 15
-                return $r.RawContentLength
-            } catch { return 0 }
-        } -ArgumentList $testUrl
-    }
-
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    $results = $jobs | Wait-Job -Timeout 20 | Receive-Job
+    $tasks = for ($i = 0; $i -lt $parallelCount; $i++) { $client.GetByteArrayAsync($testUrl) }
+    [System.Threading.Tasks.Task]::WaitAll($tasks, 15000) | Out-Null
     $sw.Stop()
-    $jobs | Remove-Job -Force -ErrorAction SilentlyContinue
 
-    $totalBytes = ($results | Measure-Object -Sum).Sum
+    $totalBytes = 0
+    foreach ($t in $tasks) {
+        if ($t.Status -eq [System.Threading.Tasks.TaskStatus]::RanToCompletion) {
+            $totalBytes += $t.Result.Length
+        }
+    }
     $seconds = $sw.Elapsed.TotalSeconds
     if ($totalBytes -gt 0 -and $seconds -gt 0) {
         $downloadMbps = [math]::Round((($totalBytes * 8) / $seconds) / 1MB, 1)
     }
+    $client.Dispose()
 } catch { $downloadMbps = 0 }
 
 # Guvenlik: paralel test basarisiz/dusuk sonuc verirse tek baglantili yedek test dene
