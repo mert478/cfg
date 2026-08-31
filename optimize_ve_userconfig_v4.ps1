@@ -2,6 +2,9 @@
 #  CS 1.6 Kisisel Optimizasyon Araci - Surum 4.0
 #  Donanim Bazli Otomatik Kalite + Sistem Optimizasyonu + Kaynak Denetimi
 #
+#  Gelistirici : Ay Yildiz | Silva
+#  Topluluk    : www.ayyildizailesi.com
+#
 #  CMD veya PowerShell'den, Yonetici olsun olmasin calistirilabilir.
 #  Script gerektiginde kendini otomatik Yonetici olarak yeniden baslatir.
 # =========================================================
@@ -44,6 +47,11 @@ function Get-GuidFromPowercfgLine($line) {
 # =========================================================
 #  1) DONANIM ALGILAMA
 # =========================================================
+Write-Host "`n=========================================================" -ForegroundColor DarkCyan
+Write-Host "   CS 1.6 KISISEL OPTIMIZASYON ARACI - v4.0" -ForegroundColor Cyan
+Write-Host "   Gelistirici: Ay Yildiz | Silva" -ForegroundColor Cyan
+Write-Host "   Topluluk   : www.ayyildizailesi.com" -ForegroundColor Cyan
+Write-Host "=========================================================" -ForegroundColor DarkCyan
 Write-Host "`n=== DONANIM BILGILERI TOPLANIYOR ===" -ForegroundColor Cyan
 
 try {
@@ -179,6 +187,9 @@ $doResourceCheck = Read-Host "Kaynak tuketen programlari ve antivirus tarama aya
 #  4) userconfig.cfg OLUSTUR
 # =========================================================
 $cfg = @"
+// =========================================================
+// CS 1.6 Kisisel Optimizasyon Araci - Ay Yildiz | Silva
+// Topluluk: www.ayyildizailesi.com
 // =========================================================
 // Hardware: $cpu ($cpuCores cekirdek) | $ramGB GB RAM | $gpu (~$vramGB GB VRAM) | $hz Hz
 // Secilen Mod: $(if ($modeChoice -eq "2") { "YUKSEK KALITE + REKABETCI" } else { "OTOMATIK ($hwTier)" })
