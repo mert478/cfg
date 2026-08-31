@@ -20,7 +20,7 @@ CPU çekirdek sayısı, RAM miktarı, GPU ve VRAM miktarını otomatik algılar;
 
 ### 2) İnternet Ölçümü
 - **Ping testi** (8.8.8.8 ve 1.1.1.1'e) → gecikme profilini belirler, bu `cl_updaterate`/`cl_cmdrate`/`ex_interp` değerlerine yansır.
-- **Gerçek indirme hızı testi** (4MB test dosyası indirilip süresi ölçülür) → `rate` değerini gerçek bant genişliğinize göre ayarlar. Ping ile hız (Mbps) birbirinden farklı şeylerdir, bu yüzden ikisi ayrı ayrı ölçülür.
+- **Gerçek indirme hızı testi** → `rate` değerini gerçek bant genişliğinize göre ayarlar. speedtest.net gibi siteler doğruluğu artırmak için **paralel çoklu bağlantı** kullanır (tek bağlantı TCP yavaş başlangıcı yüzünden gerçek hızın altında sonuç verir); bu araç da aynı mantıkla **4 paralel bağlantı** üzerinden toplam 32 MB indirip gerçek hıza daha yakın bir ölçüm yapar. Test başarısız olursa tek bağlantılı bir yedek teste geçer, o da başarısız olursa güvenli/düşük bir varsayılan değer kullanılır.
 
 ### 3) Kalite Modu Seçimi (Menü)
 Script çalışınca size sorar:
@@ -35,16 +35,15 @@ Evet derseniz:
 - Windows Oyun Modu'nu (Game Mode) açar, Game DVR arka plan kaydını kapatır.
 - **Scriptleyemediğimiz ama etkili olduğu bilinen ayarlar için ekranda bilgilendirme gösterir** (aşağıda tam liste var).
 
-### 5) Performans Denetimi (Onaylı, Yönetici gerekir)
-Evet derseniz:
-- En çok CPU/RAM tüketen 8 programı listeler, isterseniz seçtiklerinizi kapatabilirsiniz.
-- Windows Defender gerçek zamanlı koruması açıksa üç seçenek sunar:
-  1. **Güvenli (önerilen):** Sadece CS 1.6 klasörünü tarama dışı bırakır (koruma açık kalır, sadece oyun dosyaları taranmaz).
-  2. **Riskli:** Gerçek zamanlı korumayı tamamen geçici kapatır (açıkça onay ister, "EVET" yazmanız gerekir).
-  3. Hiçbir şey yapma.
+### 5) Geri Alma (Restore)
+Sistem ayarlarında değişiklik yapıldıysa, script masaüstüne **`eski_ayarlara_don.ps1`** dosyası bırakır. Bu dosyayı Yönetici olarak çalıştırarak güç planı, fare ve Game DVR ayarlarını **eski haline** döndürebilirsiniz.
 
-### 6) Geri Alma (Restore)
-Sistem/AV ayarlarında değişiklik yapıldıysa, script masaüstüne **`eski_ayarlara_don.ps1`** dosyası bırakır. Bu dosyayı Yönetici olarak çalıştırarak güç planı, fare, Game DVR ve Defender ayarlarını **eski haline** döndürebilirsiniz.
+### 6) Son Adım: cfg Dosyasını Oyuna Taşıma
+Script işini bitirdiğinde masaüstünde bir `userconfig.cfg` dosyası bulacaksınız. Bu dosyayı **CS 1.6 kurulumunuzdaki `cstrike` klasörüne** kopyalamanız gerekir, örneğin:
+```
+C:\...\Counter-Strike 1.6\cstrike\userconfig.cfg
+```
+Kopyaladıktan sonra oyunu (yeniden) başlatın, ayarlar otomatik yüklenecektir.
 
 ---
 
@@ -101,7 +100,6 @@ Dosya masaüstünde. Not Defteri ile açıp `sensitivity`, `gamma`, `brightness`
 - **Sadece Windows'ta çalışır.**
 - **`rate`, `cl_updaterate`, `cl_cmdrate` gibi değerler sunucu tarafından sınırlanabilir** (`sv_` limitleri). Client'ta yüksek yazmanız sunucu izin vermiyorsa etkisiz kalır.
 - **`r_fullbright` bilerek cfg'ye eklenmedi** — çoğu sunucuda admin mod/antihile tarafından tespit edilip yasaklanma riski taşır.
-- **Windows Defender'ı tamamen kapatma seçeneği (Seçenek 2) risklidir.** Sadece geçici olarak, oyun oynarken kullanmanız ve sonrasında `eski_ayarlara_don.ps1` ile geri açmanız önerilir. Mümkünse "Güvenli" seçeneği (sadece oyun klasörünü muaf tutma) kullanın.
 - Kurumsal/okul bilgisayarlarında Grup İlkesi (GPO) bazı registry değişikliklerini engelleyebilir; script hatasız şekilde o adımı atlar.
 - Kod tamamen açık ve okunabilir durumda — çalıştırmadan önce içeriğini incelemeniz önerilir.
 
@@ -112,7 +110,7 @@ Dosya masaüstünde. Not Defteri ile açıp `sensitivity`, `gamma`, `brightness`
 1. Masaüstünüzdeki `eski_ayarlara_don.ps1` dosyasını bulun.
 2. Sağ tık → *Yönetici olarak çalıştır*.
 
-Bu dosya yalnızca sistem optimizasyonu veya performans denetimi adımlarından en az biri **"Evet"** seçildiyse oluşur.
+Bu dosya yalnızca sistem optimizasyonu adımı **"Evet"** seçildiyse oluşur.
 
 ---
 
