@@ -123,12 +123,12 @@ gl_smoothmodel "0"
 gl_spriteblend "0"
 gl_polyoffset "0.1"
 gl_flipmatrix "0"
-gl_max_size "512"
+gl_max_size "2048"
 gl_playermip "2"
-gl_round_down "2"
+gl_round_down "0"
 r_mirroralpha "0"
 r_dynamic "0"
-gl_texturemode "GL_NEAREST_MIPMAP_NEAREST"   // en hizli doku modu (dusuk kalite pahasina)
+gl_texturemode "GL_LINEAR_MIPMAP_LINEAR"   // dokulari yumusatir, pixellesmeyi onler (GTX 1070 Ti ve uzeri kartlarda FPS kaybi ihmal edilebilir)
 gamma "3"                // ekran parlakligi, kisiye/monitore gore degistirebilirsin
 brightness "2"           // ekran parlakligi, kisiye/monitore gore degistirebilirsin
 contrast "1"             // ekran kontrasti, kisiye/monitore gore degistirebilirsin
