@@ -33,7 +33,19 @@ Evet derseniz:
 - Güç planını önce **Nihai Performans (Ultimate Performance)** yapmayı dener, bulunamazsa **Yüksek Performans**'a geçer.
 - Windows fare ivmesini (mouse acceleration) kapatır.
 - Windows Oyun Modu'nu (Game Mode) açar, Game DVR arka plan kaydını kapatır.
+- **Ağ adaptörü güç tasarrufunu kapatır** (Windows'un ağ kartını zaman zaman uyku moduna alması mikro-donmalara sebep olabilir).
+- **TCP Delayed ACK / Nagle Algoritmasını kapatır** (ağ paketi gönderiminde küçük gecikmeler yaratan bir Windows varsayılanı; tam etkisi için yeniden başlatma önerilir).
+- **`hl.exe` için Tam Ekran Optimizasyonlarını otomatik kapatır** (cstrike klasörü bulunduysa `hl.exe`'yi de bulup registry üzerinden ayarlar, elle "Uyumluluk" sekmesine girmenize gerek kalmaz).
 - **Scriptleyemediğimiz ama etkili olduğu bilinen ayarlar için ekranda bilgilendirme gösterir** (aşağıda tam liste var).
+
+### 5) İşlem Önceliği İzleyicisi (Opsiyonel)
+İsterseniz masaüstüne bir `hl_oncelik_izleyici.ps1` dosyası oluşturulur ve ayrı bir pencerede başlatılır. Bu pencere `hl.exe`'nin başlamasını bekler, oyun açılır açılmaz işlem önceliğini otomatik **"Yüksek"** yapar — daha stabil kare süreleri sağlar. Bu izleyiciyi istediğiniz zaman masaüstünden tekrar çalıştırabilirsiniz.
+
+### 6) Sürüm Kontrolü
+Script her çalıştığında GitHub'daki güncel sürümle karşılaştırır. Yeni bir sürüm varsa ekranda bilgilendirme gösterir (otomatik güncellemez, sadece haber verir).
+
+### 7) İşlem Günlüğü (Log)
+Script çalışırken yaptığı her şeyi masaüstüne **`cs16_optimize_log.txt`** olarak kaydeder. Bir sorunla karşılaşırsanız bu dosyayı GitHub Issues'a ekleyerek bildirebilirsiniz — hata ayıklamayı çok kolaylaştırır.
 
 ### 5) Geri Alma (Restore)
 Sistem ayarlarında değişiklik yapıldıysa, script masaüstüne **`eski_ayarlara_don.ps1`** dosyası bırakır. Bu dosyayı Yönetici olarak çalıştırarak güç planı, fare ve Game DVR ayarlarını **eski haline** döndürebilirsiniz.
@@ -85,6 +97,24 @@ Araştırdığınız input lag faktörlerinin bir kısmı Windows/PowerShell'den
 | **Bufferbloat / QoS (SQM)** | Router seviyesinde bir ayar, Windows'tan yapılamaz. |
 
 V-Sync kapatma tek istisna — bu `userconfig.cfg` içinde `gl_vsync "0"` ile otomatik yapılıyor.
+
+---
+
+## Nişan / İsabet Ayarları
+
+`cl_dynamiccrosshair "0"` aktif gelir (crosshair hareket/ateş ederken büyümez, sabit nişan noktası). `cl_himodels` ise `//` ile yorum satırında bırakıldı — topluluk bu konuda ikiye bölünmüş (bazıları performans/tutarlılık için kapalı ister), aktif etmek isterseniz cfg dosyasında başındaki `//` işaretini silmeniz yeterli.
+
+## Otomatik cstrike Klasörü Bulma
+
+Script, Steam kayıt defterini ve olası eski/WON kurulum yollarını tarayarak `cstrike` klasörünüzü otomatik bulmaya çalışır. Bulursa doğrudan oraya kopyalamayı teklif eder (zaten bir `userconfig.cfg` varsa önce `userconfig_eski.cfg` olarak yedekler). Bulamazsa aşağıdaki elle taşıma talimatını kullanmanız gerekir.
+
+## Steam Başlatma Seçenekleri (Bonus)
+
+Script sonunda, ekranınızın Hz değerine göre hazırlanmış bir Steam "Başlatma Seçenekleri" satırı önerir, örneğin:
+```
+-noforcemaccel -noforcemparms -noforcemspd -freq 144
+```
+Bunu Steam Kütüphanesi → CS 1.6 → sağ tık → Özellikler → Başlatma Seçenekleri kutusuna yapıştırmanız yeterli.
 
 ---
 
