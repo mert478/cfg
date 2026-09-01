@@ -9,7 +9,9 @@
 #  Script gerektiginde kendini otomatik Yonetici olarak yeniden baslatir.
 # =========================================================
 
+$ScriptVersion = "4.1"
 $ScriptSourceUrl = "https://raw.githubusercontent.com/mert478/cfg/main/optimize_ve_userconfig_v4.ps1"
+$VersionCheckUrl = "https://raw.githubusercontent.com/mert478/cfg/main/VERSION"
 
 # ---------------------------------------------------------
 #  0) Kendini otomatik Yonetici olarak yeniden baslat
@@ -35,6 +37,25 @@ if (-not $isAdmin) {
 }
 
 # ---------------------------------------------------------
+#  0b) Islem log dosyasi baslat (sorun bildirimi icin)
+# ---------------------------------------------------------
+$logPath = Join-Path ([Environment]::GetFolderPath('Desktop')) "cs16_optimize_log.txt"
+try { Start-Transcript -Path $logPath -Force -ErrorAction SilentlyContinue | Out-Null } catch {}
+
+# ---------------------------------------------------------
+#  0c) Guncellik kontrolu (basarisiz olsa bile scripti durdurmaz)
+# ---------------------------------------------------------
+try {
+    $latestVersion = (Invoke-WebRequest -Uri $VersionCheckUrl -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop).Content.Trim()
+    if ($latestVersion -and ($latestVersion -ne $ScriptVersion)) {
+        Write-Host "`n[GUNCELLEME MEVCUT] Kullandiginiz surum: v$ScriptVersion | Guncel surum: v$latestVersion" -ForegroundColor Yellow
+        Write-Host "En son duzeltmeler/ozellikler icin: https://github.com/mert478/cfg" -ForegroundColor Yellow
+    }
+} catch {
+    # internet yoksa veya VERSION dosyasi bulunamazsa sessizce devam et
+}
+
+# ---------------------------------------------------------
 #  Yardimci: powercfg ciktisindan GUID cikar
 # ---------------------------------------------------------
 function Get-GuidFromPowercfgLine($line) {
@@ -48,7 +69,7 @@ function Get-GuidFromPowercfgLine($line) {
 #  1) DONANIM ALGILAMA
 # =========================================================
 Write-Host "`n=========================================================" -ForegroundColor DarkCyan
-Write-Host "   CS 1.6 KISISEL OPTIMIZASYON ARACI - v4.0" -ForegroundColor Cyan
+Write-Host "   CS 1.6 KISISEL OPTIMIZASYON ARACI - v$ScriptVersion" -ForegroundColor Cyan
 Write-Host "   Gelistirici: Ay Yildiz | Silva" -ForegroundColor Cyan
 Write-Host "   Topluluk   : www.ayyildizailesi.com" -ForegroundColor Cyan
 Write-Host "=========================================================" -ForegroundColor DarkCyan
@@ -514,6 +535,58 @@ if ($doSystemOpt -match '^[EeYy]') {
             Write-Host "[OK] Windows Oyun Modu acildi, Game DVR arka plan kaydi kapatildi." -ForegroundColor Green
         } catch { Write-Host "[HATA] Game Bar ayarlari degistirilemedi: $_" -ForegroundColor Red }
 
+        # --- Ag adaptoru guc tasarrufunu kapat (mikro-donma/stutter kaynagi olabilir) ---
+        try {
+            $adapters = Get-NetAdapter -Physical -ErrorAction Stop | Where-Object { $_.Status -eq 'Up' }
+            foreach ($adapter in $adapters) {
+                $pm = Get-NetAdapterPowerManagement -Name $adapter.Name -ErrorAction SilentlyContinue
+                if ($pm) {
+                    $oldPm = $pm.AllowComputerToTurnOffDevice
+                    $restoreLines += "Set-NetAdapterPowerManagement -Name '$($adapter.Name)' -AllowComputerToTurnOffDevice '$oldPm' -ErrorAction SilentlyContinue"
+                    Set-NetAdapterPowerManagement -Name $adapter.Name -AllowComputerToTurnOffDevice Disabled -ErrorAction SilentlyContinue
+                }
+            }
+            if ($adapters) { Write-Host "[OK] Ag adaptoru guc tasarrufu kapatildi (mikro-donma riski azaltilir)." -ForegroundColor Green }
+        } catch { Write-Host "[BILGI] Ag adaptoru guc tasarrufu ayarlanamadi (surucu desteklemiyor olabilir)." -ForegroundColor Yellow }
+
+        # --- TCP Delayed ACK / Nagle Algoritmasi kapat (network gecikmesini azaltir) ---
+        try {
+            $tcpIfaces = Get-ChildItem "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces" -ErrorAction Stop
+            foreach ($iface in $tcpIfaces) {
+                try {
+                    $oldAck = (Get-ItemProperty -Path $iface.PSPath -Name TcpAckFrequency -EA SilentlyContinue).TcpAckFrequency
+                    $oldNoDelay = (Get-ItemProperty -Path $iface.PSPath -Name TCPNoDelay -EA SilentlyContinue).TCPNoDelay
+                    if ($null -ne $oldAck) { $restoreLines += "Set-ItemProperty -Path '$($iface.PSPath)' -Name TcpAckFrequency -Value $oldAck -Force" }
+                    else { $restoreLines += "Remove-ItemProperty -Path '$($iface.PSPath)' -Name TcpAckFrequency -ErrorAction SilentlyContinue" }
+                    if ($null -ne $oldNoDelay) { $restoreLines += "Set-ItemProperty -Path '$($iface.PSPath)' -Name TCPNoDelay -Value $oldNoDelay -Force" }
+                    else { $restoreLines += "Remove-ItemProperty -Path '$($iface.PSPath)' -Name TCPNoDelay -ErrorAction SilentlyContinue" }
+
+                    New-ItemProperty -Path $iface.PSPath -Name TcpAckFrequency -PropertyType DWord -Value 1 -Force -ErrorAction SilentlyContinue | Out-Null
+                    New-ItemProperty -Path $iface.PSPath -Name TCPNoDelay -PropertyType DWord -Value 1 -Force -ErrorAction SilentlyContinue | Out-Null
+                } catch {}
+            }
+            Write-Host "[OK] TCP Delayed ACK/Nagle Algoritmasi kapatildi (tam etki icin yeniden baslatma onerilir)." -ForegroundColor Green
+        } catch { Write-Host "[BILGI] TCP ACK ayari yapilamadi." -ForegroundColor Yellow }
+
+        # --- hl.exe icin Tam Ekran Optimizasyonlarini otomatik kapat ---
+        if ($foundCstrike) {
+            try {
+                $hlExePath = Join-Path (Split-Path $foundCstrike -Parent) "hl.exe"
+                if (Test-Path $hlExePath) {
+                    $layersPath = "HKCU:\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers"
+                    if (-not (Test-Path $layersPath)) { New-Item -Path $layersPath -Force | Out-Null }
+                    $oldLayer = (Get-ItemProperty -Path $layersPath -Name $hlExePath -EA SilentlyContinue).$hlExePath
+                    if ($oldLayer) {
+                        $restoreLines += "Set-ItemProperty -Path '$layersPath' -Name '$hlExePath' -Value '$oldLayer' -Force"
+                    } else {
+                        $restoreLines += "Remove-ItemProperty -Path '$layersPath' -Name '$hlExePath' -ErrorAction SilentlyContinue"
+                    }
+                    Set-ItemProperty -Path $layersPath -Name $hlExePath -Value "~ DISABLEDXMAXIMIZEDWINDOWEDMODE" -Force
+                    Write-Host "[OK] hl.exe icin Tam Ekran Optimizasyonlari devre disi birakildi." -ForegroundColor Green
+                }
+            } catch { Write-Host "[BILGI] hl.exe icin Fullscreen Optimizations ayari yapilamadi." -ForegroundColor Yellow }
+        }
+
         # --- Scriptleyemedigimiz ama etkili oldugu bilinen ayarlar icin bilgilendirme ---
         Write-Host "`n--- Elle Yapman Gereken Ek Ayarlar (Script Bunlari Otomatik Yapamiyor) ---" -ForegroundColor Yellow
         Write-Host "  * V-Sync: cfg icinde kapatildi (gl_vsync 0), ekstra islem gerekmez."
@@ -536,6 +609,42 @@ if ($isAdminNow -and ($doSystemOpt -match '^[EeYy]')) {
         Set-Content -Path $restorePath -Value ($restoreLines -join "`r`n") -Encoding UTF8 -ErrorAction Stop
         Write-Host "`n[BILGI] Eski ayarlara donmek icin masaustundeki 'eski_ayarlara_don.ps1' dosyasini Yonetici olarak calistirin." -ForegroundColor Cyan
     } catch { Write-Host "[UYARI] Geri alma dosyasi olusturulamadi." -ForegroundColor Yellow }
+}
+
+# =========================================================
+#  6b) ISLEM ONCELIGI WATCHER (opsiyonel)
+# =========================================================
+Write-Host "`n=== ISLEM ONCELIGI ===" -ForegroundColor Cyan
+$doWatcher = Read-Host "hl.exe baslayinca islem onceligini otomatik 'Yuksek' yapan bir izleyici baslatilsin mi? (E/H)"
+if ($doWatcher -match '^[EeYy]') {
+    try {
+        $watcherPath = Join-Path ([Environment]::GetFolderPath('Desktop')) "hl_oncelik_izleyici.ps1"
+        $watcherContent = @'
+Write-Host "hl.exe bekleniyor, bulununca islem onceligi Yuksek yapilacak..." -ForegroundColor Cyan
+Write-Host "(Bu pencereyi acik birakin, oyunu simdi baslatabilirsiniz.)" -ForegroundColor Yellow
+while ($true) {
+    $proc = Get-Process -Name "hl" -ErrorAction SilentlyContinue
+    if ($proc) {
+        try {
+            $proc.PriorityClass = 'High'
+            Write-Host "[OK] hl.exe onceligi 'Yuksek' olarak ayarlandi (PID $($proc.Id))." -ForegroundColor Green
+        } catch {
+            Write-Host "[HATA] Oncelik ayarlanamadi: $_" -ForegroundColor Red
+        }
+        break
+    }
+    Start-Sleep -Seconds 2
+}
+Write-Host "Islem tamamlandi, bu pencereyi kapatabilirsiniz." -ForegroundColor Cyan
+Start-Sleep -Seconds 5
+'@
+        Set-Content -Path $watcherPath -Value $watcherContent -Encoding UTF8 -ErrorAction Stop
+        Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$watcherPath`"" -WindowStyle Normal
+        Write-Host "[OK] Izleyici baslatildi (ayri bir pencerede acildi). Simdi oyunu baslatabilirsiniz." -ForegroundColor Green
+        Write-Host "[BILGI] Izleyiciyi istediginiz zaman tekrar calistirmak icin masaustundeki 'hl_oncelik_izleyici.ps1' dosyasini kullanabilirsiniz." -ForegroundColor Cyan
+    } catch {
+        Write-Host "[HATA] Izleyici baslatilamadi: $_" -ForegroundColor Red
+    }
 }
 
 Write-Host "`n=========================================================" -ForegroundColor DarkCyan
@@ -562,5 +671,7 @@ Write-Host " zorla uygulamasini engeller ve ekraninizin gercek Hz degerini bildi
 
 Write-Host "`n=== ISLEM TAMAMLANDI ===" -ForegroundColor Cyan
 Write-Host "Bol fraglar, iyi hs'ler! -Ay Yildiz | Silva" -ForegroundColor Magenta
+try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch {}
+Write-Host "[BILGI] Bir sorun yasarsaniz 'cs16_optimize_log.txt' dosyasini (masaustunde) GitHub Issues'a ekleyerek bildirebilirsiniz." -ForegroundColor DarkGray
 Write-Host "Devam etmek icin bir tusa basin..."
 [void][System.Console]::ReadKey($true)
