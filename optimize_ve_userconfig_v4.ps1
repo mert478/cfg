@@ -303,6 +303,11 @@ brightness "2"
 // r_fullbright BILEREK EKLENMEDI: cogu sunucuda admin mod/antihile tarafindan
 // tespit edilip banlanma riski tasir.
 
+// --- Nisan / Isabet ---
+cl_dynamiccrosshair "0"   // crosshair hareket/ates ederken buyumez - sabit nisan noktasi, rekabetci oyuncularin cogunun tercihi
+// cl_himodels "1"   // AKTIF ETMEK ISTERSEN basindaki // isaretini sil: rakip modellerini yuksek detayda gosterir (hitbox gorseli degisebilir).
+                      // Bazi oyuncular performans/tutarlilik icin KAPALI (0) tercih eder - bu yuzden asagida devre disi birakildi, kisisel tercihinize gore acin.
+
 // --- Mouse / Input (Raw Input input lag icin kritik) ---
 m_rawinput "1"
 m_filter "0"
@@ -352,16 +357,85 @@ cl_forwardspeed "400"
 cl_bob "0.01"
 cl_bobcycle "0.8"
 
-echo "=== Ayarlar  Hazir -Silva ^^ ==="
+echo "=== USERCONFIG LOADED (v4) ==="
 "@
 
 try {
     $desktopPath = [Environment]::GetFolderPath('Desktop')
     $cfgPath = Join-Path $desktopPath "userconfig.cfg"
+
+    # Masaustunde zaten bir userconfig.cfg varsa uzerine yazmadan once yedekle
+    if (Test-Path $cfgPath) {
+        $backupPath = Join-Path $desktopPath "userconfig_eski.cfg"
+        Copy-Item -Path $cfgPath -Destination $backupPath -Force -ErrorAction SilentlyContinue
+        Write-Host "[BILGI] Masaustundeki eski userconfig.cfg 'userconfig_eski.cfg' olarak yedeklendi." -ForegroundColor Cyan
+    }
+
     Set-Content -Path $cfgPath -Value $cfg -Encoding Ascii -ErrorAction Stop
     Write-Host "`n[BASARILI] userconfig.cfg olusturuldu: $cfgPath" -ForegroundColor Green
 } catch {
     Write-Host "`n[HATA] userconfig.cfg yazilamadi: $_" -ForegroundColor Red
+}
+
+# ---------------------------------------------------------
+#  4b) cstrike klasorunu otomatik bul + dogrudan kopyala
+# ---------------------------------------------------------
+function Find-CstrikeFolder {
+    $candidates = @()
+    try {
+        $steamPath = (Get-ItemProperty -Path "HKCU:\Software\Valve\Steam" -Name SteamPath -ErrorAction Stop).SteamPath
+        if ($steamPath) {
+            $candidates += Join-Path $steamPath "steamapps\common\Half-Life\cstrike"
+            $vdfPath = Join-Path $steamPath "steamapps\libraryfolders.vdf"
+            if (Test-Path $vdfPath) {
+                $vdfContent = Get-Content $vdfPath -Raw -ErrorAction SilentlyContinue
+                if ($vdfContent) {
+                    $matches = [regex]::Matches($vdfContent, '"path"\s+"([^"]+)"')
+                    foreach ($m in $matches) {
+                        $libPath = $m.Groups[1].Value -replace '\\\\','\'
+                        $candidates += Join-Path $libPath "steamapps\common\Half-Life\cstrike"
+                    }
+                }
+            }
+        }
+    } catch {}
+
+    $candidates += @(
+        "C:\Program Files (x86)\Half-Life\cstrike",
+        "C:\Program Files\Half-Life\cstrike",
+        "C:\Sierra\Half-Life\cstrike",
+        "C:\Games\Half-Life\cstrike",
+        "C:\Half-Life\cstrike"
+    )
+
+    foreach ($c in $candidates) {
+        if ($c -and (Test-Path $c)) { return $c }
+    }
+    return $null
+}
+
+Write-Host "`nCS 1.6 kurulumu (cstrike klasoru) araniyor..." -ForegroundColor Cyan
+$foundCstrike = Find-CstrikeFolder
+
+if ($foundCstrike) {
+    Write-Host "[BULUNDU] $foundCstrike" -ForegroundColor Green
+    $copyChoice = Read-Host "Bu klasore dogrudan kopyalayalim mi? (E/H)"
+    if ($copyChoice -match '^[EeYy]') {
+        try {
+            $targetCfgPath = Join-Path $foundCstrike "userconfig.cfg"
+            if (Test-Path $targetCfgPath) {
+                $targetBackup = Join-Path $foundCstrike "userconfig_eski.cfg"
+                Copy-Item -Path $targetCfgPath -Destination $targetBackup -Force -ErrorAction SilentlyContinue
+                Write-Host "[BILGI] Oyun klasorundeki eski userconfig.cfg 'userconfig_eski.cfg' olarak yedeklendi." -ForegroundColor Cyan
+            }
+            Copy-Item -Path $cfgPath -Destination $targetCfgPath -Force -ErrorAction Stop
+            Write-Host "[BASARILI] userconfig.cfg dogrudan oyun klasorune kopyalandi: $targetCfgPath" -ForegroundColor Green
+        } catch {
+            Write-Host "[HATA] Oyun klasorune kopyalanamadi: $_" -ForegroundColor Red
+        }
+    }
+} else {
+    Write-Host "[BILGI] cstrike klasoru otomatik bulunamadi. Dosyayi elle kopyalamaniz gerekecek (asagida talimat var)." -ForegroundColor Yellow
 }
 
 # =========================================================
@@ -465,12 +539,26 @@ if ($isAdminNow -and ($doSystemOpt -match '^[EeYy]')) {
 }
 
 Write-Host "`n=========================================================" -ForegroundColor DarkCyan
-Write-Host "   SON ADIM: userconfig.cfg DOSYASINI OYUN KLASORUNE TASI" -ForegroundColor Yellow
+Write-Host "   SON ADIM: userconfig.cfg DOSYASI" -ForegroundColor Yellow
 Write-Host "=========================================================" -ForegroundColor DarkCyan
-Write-Host "Masaustunde olusturulan 'userconfig.cfg' dosyasini kopyalayip"
-Write-Host "CS 1.6 kurulumunuzdaki 'cstrike' klasorune yapistirin, ornegin:"
-Write-Host "  C:\...\Counter-Strike 1.6\cstrike\userconfig.cfg" -ForegroundColor Green
+if ($foundCstrike -and ($copyChoice -match '^[EeYy]')) {
+    Write-Host "userconfig.cfg zaten oyun klasorune kopyalandi, ekstra islem gerekmiyor." -ForegroundColor Green
+} else {
+    Write-Host "Masaustunde olusturulan 'userconfig.cfg' dosyasini kopyalayip"
+    Write-Host "CS 1.6 kurulumunuzdaki 'cstrike' klasorune yapistirin, ornegin:"
+    Write-Host "  C:\...\Counter-Strike 1.6\cstrike\userconfig.cfg" -ForegroundColor Green
+}
 Write-Host "Ardindan oyunu (yeniden) baslatin, ayarlar otomatik yuklenecektir."
+
+Write-Host "`n=========================================================" -ForegroundColor DarkCyan
+Write-Host "   BONUS: STEAM BASLATMA SECENEKLERI (Launch Options)" -ForegroundColor Yellow
+Write-Host "=========================================================" -ForegroundColor DarkCyan
+$launchOptions = "-noforcemaccel -noforcemparms -noforcemspd -freq $hz"
+Write-Host "Input lag'i daha da azaltmak icin Steam Kutuphanesi -> CS 1.6 -> sag tik"
+Write-Host "-> Ozellikler -> Baslatma Secenekleri kutusuna asagidaki satiri ekleyin:"
+Write-Host "  $launchOptions" -ForegroundColor Green
+Write-Host "(Bu, Windows'un fareye/klavyeye kendi ivme/parametre degerlerini"
+Write-Host " zorla uygulamasini engeller ve ekraninizin gercek Hz degerini bildirir.)"
 
 Write-Host "`n=== ISLEM TAMAMLANDI ===" -ForegroundColor Cyan
 Write-Host "Bol fraglar, iyi hs'ler! -Ay Yildiz | Silva" -ForegroundColor Magenta
